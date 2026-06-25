@@ -16,6 +16,15 @@ static const char *TAG = "example";
 #define EXAMPLE_ONEWIRE_BUS_GPIO    4
 #define EXAMPLE_ONEWIRE_MAX_DS18B20 2
 
+// Variável que indica que houve uma vibração
+static volatile bool keyes_detectado = false;
+
+// Função de interrupção do sensor Keyes
+static void IRAM_ATTR keyes_isr_handler(void *arg)
+{
+    keyes_detectado = true;
+}
+
 void app_main(void)
 {
     // install new 1-wire bus
@@ -71,32 +80,43 @@ void app_main(void)
 
     //Configuração do sensor keyes
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_5), //Seleciona o GPIO5
-        .mode = GPIO_MODE_INPUT, //Define como entrada
-        .pull_up_en = GPIO_PULLUP_DISABLE, //Não usa pull_up interno
-        .pull_down_en = GPIO_PULLDOWN_DISABLE //Não usa pull_down interno
+        .pin_bit_mask = (1ULL << GPIO_NUM_5),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE
     };
 
     gpio_config(&io_conf);
 
+    // Instala o serviço de interrupções
+    gpio_install_isr_service(0);
+
+    // Associa a interrupção ao GPIO 5
+    gpio_isr_handler_add(
+       GPIO_NUM_5,
+       keyes_isr_handler,
+       NULL
+    );
+
     // get temperature from sensors one by one
     float temperature;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(200));
-        // trigger temperature conversion for all DS18B20s on the bus
-        ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
-        // read temperature from each DS18B20
-        for (int i = 0; i < ds18b20_device_num; i ++) {
-            ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temperature));
-            ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2fC", i, temperature);
+
+        if(keyes_detectado){
+            keyes_detectado = false;
+            ESP_LOGI("KEYES", "Vibracao detectada");
         }
 
-        //Verifica o estado do sensor
-        int estado = gpio_get_level(GPIO_NUM_5);
+        // trigger temperature conversion for all DS18B20s on the bus
 
-        //Verifica se houve vibração
-        if(estado == 0){
-            ESP_LOGI("KEYES", "Vibração Detectada");
+        if(ds18b20_device_num > 0){
+            ESP_ERROR_CHECK(ds18b20_trigger_temperature_conversion_for_all(bus));
+        // read temperature from each DS18B20
+            for (int i = 0; i < ds18b20_device_num; i ++) {
+                ESP_ERROR_CHECK(ds18b20_get_temperature(ds18b20s[i], &temperature));
+                ESP_LOGI(TAG, "temperature read from DS18B20[%d]: %.2fC", i, temperature);
+            }
         }
     }
 }
